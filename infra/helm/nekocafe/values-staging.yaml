@@ -1,0 +1,4 @@
+replicaCount: 2
+canary:
+  enabled: false
+  weight: 0

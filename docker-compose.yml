@@ -1,0 +1,191 @@
+version: "3.9"
+
+services:
+  # ===== 预约服务 (Python / FastAPI) =====
+  reservation:
+    build:
+      context: ./services/reservation
+      dockerfile: Dockerfile
+    image: nekocafe/reservation:dev
+    container_name: nekocafe-reservation
+    ports:
+      - "8081:8080"
+    environment:
+      - ENV=dev
+      - DATABASE_URL=mysql+asyncmy://nekocafe:nekocafe123@mysql:3306/nekocafe_reservation
+      - REDIS_URL=redis://redis:6379/0
+      - RABBITMQ_URL=amqp://nekocafe:nekocafe123@rabbitmq:5672/nekocafe-dev
+      - LOG_LEVEL=DEBUG
+      - OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4317
+      - OTEL_SERVICE_NAME=reservation
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://localhost:8080/healthz')",
+        ]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    restart: unless-stopped
+    networks:
+      - nekocafe-net
+
+  # ===== 会员服务 (Node.js / Express) =====
+  member:
+    build:
+      context: ./services/member
+      dockerfile: Dockerfile
+    image: nekocafe/member:dev
+    container_name: nekocafe-member
+    ports:
+      - "8082:8080"
+    environment:
+      - NODE_ENV=development
+      - PORT=8080
+      - DATABASE_URL=mysql://nekocafe:nekocafe123@mysql:3306/nekocafe_member
+      - REDIS_URL=redis://redis:6379/1
+      - RABBITMQ_URL=amqp://nekocafe:nekocafe123@rabbitmq:5672/nekocafe-dev
+      - LOG_LEVEL=debug
+      - OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4317
+      - OTEL_SERVICE_NAME=member
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/healthz"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    restart: unless-stopped
+    networks:
+      - nekocafe-net
+
+  # ===== MySQL 8.x =====
+  mysql:
+    image: mysql:8.0
+    container_name: nekocafe-mysql
+    environment:
+      MYSQL_ROOT_PASSWORD: root123
+      MYSQL_USER: nekocafe
+      MYSQL_PASSWORD: nekocafe123
+      MYSQL_DATABASE: nekocafe_reservation
+    volumes:
+      - mysql-data:/var/lib/mysql
+      - ./infra/k8s-manifests/mysql-init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-proot123"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    ports:
+      - "3306:3306"
+    networks:
+      - nekocafe-net
+
+  # ===== Redis 7.x =====
+  redis:
+    image: redis:7-alpine
+    container_name: nekocafe-redis
+    command: redis-server --appendonly yes --requirepass nekocafe123
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "nekocafe123", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    ports:
+      - "6379:6379"
+    networks:
+      - nekocafe-net
+
+  # ===== RabbitMQ 3.x =====
+  rabbitmq:
+    image: rabbitmq:3.12-management-alpine
+    container_name: nekocafe-rabbitmq
+    environment:
+      RABBITMQ_DEFAULT_USER: nekocafe
+      RABBITMQ_DEFAULT_PASS: nekocafe123
+      RABBITMQ_DEFAULT_VHOST: nekocafe-dev
+    volumes:
+      - rabbitmq-data:/var/lib/rabbitmq
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "check_port_connectivity"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    networks:
+      - nekocafe-net
+
+  # ===== OpenTelemetry Collector =====
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.98.0
+    container_name: nekocafe-otel-collector
+    volumes:
+      - ./infra/observability/otel-collector-config.yaml:/etc/otel-collector-config.yaml:ro
+    command: ["--config=/etc/otel-collector-config.yaml"]
+    ports:
+      - "4317:4317"
+      - "4318:4318"
+    networks:
+      - nekocafe-net
+
+  # ===== Prometheus =====
+  prometheus:
+    image: prom/prometheus:v2.51.2
+    container_name: nekocafe-prometheus
+    volumes:
+      - ./infra/observability/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    ports:
+      - "9090:9090"
+    networks:
+      - nekocafe-net
+
+  # ===== Grafana =====
+  grafana:
+    image: grafana/grafana:10.4.2
+    container_name: nekocafe-grafana
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=nekocafe123
+      - GF_USERS_ALLOW_SIGN_UP=false
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ./infra/observability/grafana-dashboards:/etc/grafana/provisioning/dashboards:ro
+      - ./infra/observability/grafana-datasources.yaml:/etc/grafana/provisioning/datasources/datasources.yaml:ro
+    ports:
+      - "3000:3000"
+    depends_on:
+      - prometheus
+    networks:
+      - nekocafe-net
+
+volumes:
+  mysql-data:
+  redis-data:
+  rabbitmq-data:
+  prometheus-data:
+  grafana-data:
+
+networks:
+  nekocafe-net:
+    driver: bridge

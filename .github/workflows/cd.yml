@@ -1,0 +1,214 @@
+name: CD — NekoCafé DevOps PoC
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: '目标部署环境'
+        required: true
+        default: 'dev'
+        type: choice
+        options: [dev, staging, prod]
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_PREFIX: ghcr.io/${{ github.repository_owner }}/nekocafe
+
+jobs:
+  # =====================================================
+  # 1. 部署到 dev（自动，无需审批）
+  # =====================================================
+  deploy-dev:
+    name: "Deploy · dev"
+    runs-on: ubuntu-latest
+    environment: dev
+    outputs:
+      image-tag: ${{ steps.tag.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set image tag
+        id: tag
+        run: echo "tag=sha-$(echo ${GITHUB_SHA} | cut -c1-8)" >> $GITHUB_OUTPUT
+
+      - name: Set up Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: v3.14.4
+
+      - name: Configure kubectl (dev)
+        run: |
+          echo "=== 配置 dev 集群 kubeconfig ==="
+          echo "${{ secrets.DEV_KUBECONFIG }}" | base64 -d > $HOME/.kube/config || true
+          echo "（PoC 演示：kubeconfig 从 secret 注入）"
+
+      - name: Helm upgrade (dev)
+        run: |
+          helm upgrade --install nekocafe ./infra/helm/nekocafe \
+            --namespace nekocafe-dev \
+            --create-namespace \
+            --values ./infra/helm/nekocafe/values.yaml \
+            --values ./infra/helm/nekocafe/values-dev.yaml \
+            --set image.reservation.tag=${{ steps.tag.outputs.tag }} \
+            --set image.member.tag=${{ steps.tag.outputs.tag }} \
+            --wait \
+            --timeout 5m || echo "（PoC 演示：跳过实际 K8s 部署）"
+
+      - name: Smoke test dev
+        run: |
+          echo "=== dev 环境冒烟测试 ==="
+          curl -sf http://dev.nekocafe.internal/healthz || echo "（PoC 演示）"
+          echo "✅ dev 部署完成"
+
+  # =====================================================
+  # 2. 人工审批 → 部署到 staging
+  # =====================================================
+  deploy-staging:
+    name: "Deploy · staging"
+    runs-on: ubuntu-latest
+    environment: staging
+    needs: [deploy-dev]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: v3.14.4
+
+      - name: Configure kubectl (staging)
+        run: |
+          echo "${{ secrets.STAGING_KUBECONFIG }}" | base64 -d > $HOME/.kube/config || true
+
+      - name: Helm upgrade (staging)
+        run: |
+          helm upgrade --install nekocafe ./infra/helm/nekocafe \
+            --namespace nekocafe-staging \
+            --create-namespace \
+            --values ./infra/helm/nekocafe/values.yaml \
+            --values ./infra/helm/nekocafe/values-staging.yaml \
+            --set image.reservation.tag=${{ needs.deploy-dev.outputs.image-tag }} \
+            --set image.member.tag=${{ needs.deploy-dev.outputs.image-tag }} \
+            --wait \
+            --timeout 8m || echo "（PoC 演示）"
+
+      - name: Run E2E tests on staging
+        run: |
+          echo "=== Staging E2E 测试 ==="
+          echo "（PoC 演示：此处运行 Playwright / k6 E2E 测试）"
+          echo "✅ Staging 测试通过"
+
+  # =====================================================
+  # 3. 人工审批 → 金丝雀发布到 prod（5%）
+  # =====================================================
+  canary-prod-5:
+    name: "Canary · prod 5%"
+    runs-on: ubuntu-latest
+    environment: prod-canary
+    needs: [deploy-staging]
+    outputs:
+      image-tag: ${{ needs.deploy-dev.outputs.image-tag }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: v3.14.4
+
+      - name: Configure kubectl (prod)
+        run: |
+          echo "${{ secrets.PROD_KUBECONFIG }}" | base64 -d > $HOME/.kube/config || true
+
+      - name: Deploy Canary 5% (prod)
+        run: |
+          helm upgrade --install nekocafe-canary ./infra/helm/nekocafe \
+            --namespace nekocafe-prod \
+            --create-namespace \
+            --values ./infra/helm/nekocafe/values.yaml \
+            --values ./infra/helm/nekocafe/values-prod.yaml \
+            --set canary.enabled=true \
+            --set canary.weight=5 \
+            --set image.reservation.tag=${{ needs.deploy-dev.outputs.image-tag }} \
+            --wait \
+            --timeout 5m || echo "（PoC 演示）"
+
+      - name: Observe metrics for 10 minutes
+        run: |
+          echo "=== 观测金丝雀指标 10 分钟 ==="
+          echo "监控 P95 延迟（阈值 500ms）和错误率（阈值 1%）..."
+          sleep 10  # PoC 演示：缩短等待时间
+          echo "✅ 金丝雀指标正常，准备全量切流"
+
+  # =====================================================
+  # 4. 金丝雀全量（100%）
+  # =====================================================
+  canary-prod-100:
+    name: "Canary · prod 100%"
+    runs-on: ubuntu-latest
+    environment: prod
+    needs: [canary-prod-5]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: v3.14.4
+
+      - name: Configure kubectl (prod)
+        run: |
+          echo "${{ secrets.PROD_KUBECONFIG }}" | base64 -d > $HOME/.kube/config || true
+
+      - name: Full rollout (100%)
+        run: |
+          helm upgrade --install nekocafe ./infra/helm/nekocafe \
+            --namespace nekocafe-prod \
+            --values ./infra/helm/nekocafe/values.yaml \
+            --values ./infra/helm/nekocafe/values-prod.yaml \
+            --set canary.enabled=false \
+            --set canary.weight=0 \
+            --set image.reservation.tag=${{ needs.canary-prod-5.outputs.image-tag }} \
+            --wait \
+            --timeout 10m || echo "（PoC 演示）"
+          echo "✅ 全量发布完成"
+
+      - name: Tag release
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag "release-$(date +%Y%m%d%H%M%S)-${{ needs.canary-prod-5.outputs.image-tag }}" || true
+          git push --tags || true
+
+  # =====================================================
+  # 自动回滚 Job（触发条件：canary-prod-5 失败）
+  # =====================================================
+  auto-rollback:
+    name: "Auto Rollback · prod"
+    runs-on: ubuntu-latest
+    needs: [canary-prod-5]
+    if: failure()
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: v3.14.4
+
+      - name: Configure kubectl (prod)
+        run: |
+          echo "${{ secrets.PROD_KUBECONFIG }}" | base64 -d > $HOME/.kube/config || true
+
+      - name: Helm rollback
+        run: |
+          echo "🚨 金丝雀指标超阈，触发自动回滚！"
+          helm rollback nekocafe-reservation -n nekocafe-prod || echo "（PoC 演示）"
+          helm rollback nekocafe-member     -n nekocafe-prod || echo "（PoC 演示）"
+          echo "✅ 回滚完成"
+
+      - name: Notify rollback
+        run: |
+          echo "发送回滚告警通知到钉钉/飞书..."

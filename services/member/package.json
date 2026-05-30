@@ -1,0 +1,33 @@
+{
+  "name": "nekocafe-member",
+  "version": "1.0.0",
+  "description": "NekoCafe 会员服务 - 会员注册、等级计算、积分写入",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "nodemon src/index.js",
+    "test": "jest --coverage --coverageReporters=text --coverageReporters=lcov",
+    "lint": "eslint src/ __tests__/ --ext .js",
+    "lint:fix": "eslint src/ __tests__/ --ext .js --fix"
+  },
+  "dependencies": {
+    "express": "^4.19.2",
+    "pino": "^9.1.0",
+    "pino-http": "^10.2.0",
+    "@opentelemetry/sdk-node": "^0.51.1",
+    "@opentelemetry/auto-instrumentations-node": "^0.47.0",
+    "@opentelemetry/exporter-trace-otlp-grpc": "^0.51.1",
+    "@opentelemetry/api": "^1.8.0",
+    "uuid": "^9.0.1"
+  },
+  "devDependencies": {
+    "jest": "^29.7.0",
+    "supertest": "^7.0.0",
+    "eslint": "^9.2.0",
+    "nodemon": "^3.1.2"
+  },
+  "jest": {
+    "testEnvironment": "node",
+    "collectCoverageFrom": ["src/**/*.js"]
+  }
+}

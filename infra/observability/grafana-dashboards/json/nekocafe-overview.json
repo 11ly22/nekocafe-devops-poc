@@ -1,0 +1,12 @@
+{
+  "title": "NekoCafe Overview",
+  "uid": "nekocafe-overview",
+  "panels": [
+    {"type": "stat", "title": "QPS", "gridPos": {"h": 4, "w": 6, "x": 0, "y": 0}},
+    {"type": "stat", "title": "P99 Latency", "gridPos": {"h": 4, "w": 6, "x": 6, "y": 0}},
+    {"type": "stat", "title": "Error Rate", "gridPos": {"h": 4, "w": 6, "x": 12, "y": 0}},
+    {"type": "graph", "title": "CPU / Memory", "gridPos": {"h": 8, "w": 24, "x": 0, "y": 4}}
+  ],
+  "schemaVersion": 39,
+  "version": 1
+}

@@ -1,0 +1,42 @@
+replicaCount: 2
+
+canary:
+  enabled: false
+  weight: 0
+
+image:
+  reservation:
+    repository: ghcr.io/nekocafe/reservation
+    tag: "0.1.0"
+  member:
+    repository: ghcr.io/nekocafe/member
+    tag: "0.1.0"
+
+service:
+  type: ClusterIP
+  port: 8080
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    cpu: 500m
+    memory: 512Mi
+
+ingress:
+  enabled: true
+  className: nginx
+  hosts:
+    - host: api.nekocafe.local
+      paths:
+        - path: /reservation
+          service: reservation
+        - path: /member
+          service: member
+
+autoscaling:
+  enabled: true
+  minReplicas: 2
+  maxReplicas: 10
+  targetCPUUtilizationPercentage: 70

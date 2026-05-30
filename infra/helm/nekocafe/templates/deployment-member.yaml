@@ -1,0 +1,33 @@
+{{- if .Values.image.member }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}-member
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      app: {{ .Release.Name }}-member
+  template:
+    metadata:
+      labels:
+        app: {{ .Release.Name }}-member
+    spec:
+      containers:
+        - name: member
+          image: "{{ .Values.image.member.repository }}:{{ .Values.image.member.tag }}"
+          ports:
+            - containerPort: 8080
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 8080
+            initialDelaySeconds: 30
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: 8080
+            initialDelaySeconds: 10
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+{{- end }}
